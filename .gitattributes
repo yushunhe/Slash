@@ -1,0 +1,27 @@
+# Unreal 资源文件按二进制处理
+# 避免 Git 做行尾转换，也避免产生无意义的文本 diff / 自动合并
+*.uasset  binary
+*.umap    binary
+*.upk     binary
+*.udk     binary
+*.udn     binary
+*.ubulk   binary
+*.uexp    binary
+
+# 图片与音频
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.tga     binary
+*.exr     binary
+*.hdr     binary
+*.wav     binary
+*.fbx     binary
+*.psd     binary
+*.xcf     binary
+
+# 编译产物（正常已被 .gitignore 排除，此处双保险）
+*.dll     binary
+*.lib     binary
+*.exe     binary
+*.pdb     binary
