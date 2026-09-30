@@ -2,6 +2,9 @@
 #include  "GameFramework/SpringArmComponent.h"
 #include  "Camera/CameraComponent.h"
 #include  "GameFramework/CharacterMovementComponent.h"
+#include "Items/Item.h"
+#include "Items/Weapons/Weapon.h"
+#include "Animation/AnimMontage.h"
 
 ASlashCharacter::ASlashCharacter()
 {
@@ -62,6 +65,60 @@ void ASlashCharacter::LookUp(float Value)
 	AddControllerPitchInput(Value);
 }
 
+void ASlashCharacter::EKeyPressed()
+{
+	AWeapon* OverlappingWeapon = Cast<AWeapon>(OverlappingItem);
+	if (OverlappingWeapon)
+	{
+		OverlappingWeapon->Equip(GetMesh(), FName("RightHandSocket"));
+		CharacterState = ECharacterState::ECS_EquippedOneHandedWeapon;
+	}
+}
+
+void ASlashCharacter::Attack()
+{
+	const bool bCanAttack = CanAttack();
+	if (bCanAttack    )
+	{
+		PlayAttackMontage();
+		ActionState = EActionState::EAS_Attacking;
+	}
+	
+}
+
+bool ASlashCharacter::CanAttack()
+{
+	return ActionState == EActionState::EAS_Unoccupied && CharacterState != ECharacterState::ECS_Unequipped;
+}
+
+void ASlashCharacter::PlayAttackMontage()
+{
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (AnimInstance && AttackMontage)
+	{
+		AnimInstance->Montage_Play(AttackMontage);
+		const int32 Selection = FMath::RandRange(0, 1);
+		FName SectionName = FName();
+		switch (Selection)
+		{
+		case 0:
+			SectionName = FName("Attack1");
+			break;
+		case 1:
+			SectionName = FName("Attack2");
+			break;
+		default:
+			break;
+		}
+		AnimInstance->Montage_JumpToSection(SectionName, AttackMontage);
+	}
+}
+
+void ASlashCharacter::AttackEnd()
+{
+	ActionState = EActionState::EAS_Unoccupied;
+}
+
 
 void ASlashCharacter::Tick(float DeltaTime)
 {
@@ -79,5 +136,7 @@ void ASlashCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	PlayerInputComponent->BindAxis(FName("LookUp"), this, &ASlashCharacter::LookUp);
 
 	PlayerInputComponent->BindAction(FName("Jump"), IE_Pressed, this, &ACharacter::Jump);
+	PlayerInputComponent->BindAction(FName("Equip"), IE_Pressed, this, &ASlashCharacter::EKeyPressed);
+	PlayerInputComponent->BindAction(FName("Attack"), IE_Pressed, this, &ASlashCharacter::Attack);
 }
 
