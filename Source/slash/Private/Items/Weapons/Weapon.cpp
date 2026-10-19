@@ -8,6 +8,7 @@
 #include "Components/BoxComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Interfaces/HitInterface.h"
+#include "NiagaraComponent.h"
 
 AWeapon::AWeapon()
 {
@@ -30,22 +31,16 @@ void AWeapon::BeginPlay()
 
 	WeaponBox->OnComponentBeginOverlap.AddDynamic(this, &AWeapon::OnBoxOverlap);
 
-	UE_LOG(LogTemp, Warning, TEXT("[Diag] %s BeginPlay Box=%s Enabled=%d GenOverlap=%d R_WorldStatic=%d R_WorldDynamic=%d R_Pawn=%d"),
-		*GetName(), *GetNameSafe(WeaponBox),
-		(int32)WeaponBox->GetCollisionEnabled(),
-		WeaponBox->GetGenerateOverlapEvents() ? 1 : 0,
-		(int32)WeaponBox->GetCollisionResponseToChannel(ECollisionChannel::ECC_WorldStatic),
-		(int32)WeaponBox->GetCollisionResponseToChannel(ECollisionChannel::ECC_WorldDynamic),
-		(int32)WeaponBox->GetCollisionResponseToChannel(ECollisionChannel::ECC_Pawn));
+	
 }
 
-void AWeapon::Equip(USceneComponent* InParent, FName InSocketName)
+void AWeapon::Equip(USceneComponent* InParent, FName InSocketName, AActor* NewOwner, APawn* NewInstigator)
 {
 	AttachMeshToSocket(InParent, InSocketName);
 
-	UE_LOG(LogTemp, Warning, TEXT("[Diag] Equip %s ItemMesh parent=%s socket=%s BoxLoc=%s BoxExtent=%s"),
-		*GetName(), *GetNameSafe(ItemMesh->GetAttachParent()), *ItemMesh->GetAttachSocketName().ToString(),
-		*WeaponBox->GetComponentLocation().ToString(), *WeaponBox->GetScaledBoxExtent().ToString());
+	
+	SetOwner(NewOwner);
+	SetInstigator(NewInstigator);
 
 	ItemState = EItemState::EIS_Equipped;
 	//SetActorTickEnabled(false);          // 停止上下浮动
@@ -58,6 +53,10 @@ void AWeapon::Equip(USceneComponent* InParent, FName InSocketName)
 	if(Sphere)
 	{
 		Sphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	if (EmberEffect)
+	{
+		EmberEffect->Deactivate();
 	}
 }
 
@@ -90,6 +89,12 @@ void AWeapon::OnBoxOverlap(UPrimitiveComponent* OverlappedComponent, AActor* Oth
 
 	TArray<AActor*> ActorsToIgnore;
 	ActorsToIgnore.Add(this);
+
+	for (AActor* Actor : IgnoreActors)
+	{
+		ActorsToIgnore.AddUnique(Actor);
+	}
+
 	FHitResult BoxHit;
 	const bool bHit = UKismetSystemLibrary::BoxTraceSingle(
 		this,
@@ -100,17 +105,22 @@ void AWeapon::OnBoxOverlap(UPrimitiveComponent* OverlappedComponent, AActor* Oth
 		ETraceTypeQuery::TraceTypeQuery1,
 		false,
 		ActorsToIgnore,
-		EDrawDebugTrace::ForDuration,
+		EDrawDebugTrace::None,
 		BoxHit,
 		true
 	);
 	if (BoxHit.GetActor())
 	{
+		UGameplayStatics::ApplyDamage(BoxHit.GetActor(), Damage, GetInstigatorController(), this, UDamageType::StaticClass());
+
 		IHitInterface* HitInterface = Cast<IHitInterface>(BoxHit.GetActor());
 		if (HitInterface)
 		{
-			HitInterface->GetHit(BoxHit.ImpactPoint);
+			HitInterface->Execute_GetHit(BoxHit.GetActor(), BoxHit.ImpactPoint);
 		}
+		IgnoreActors.AddUnique(BoxHit.GetActor());
+
+		CreateFields(BoxHit.ImpactPoint);
 	}
 
 }

@@ -73,7 +73,8 @@ void ASlashCharacter::EKeyPressed()
 	AWeapon* OverlappingWeapon = Cast<AWeapon>(OverlappingItem);
 	if (OverlappingWeapon)
 	{
-		OverlappingWeapon->Equip(GetMesh(), FName("RightHandSocket"));
+		OverlappingWeapon->Equip(GetMesh(), FName("RightHandSocket"), this, this);
+
 		CharacterState = ECharacterState::ECS_EquippedOneHandedWeapon;
 		EquippedWeapon = OverlappingWeapon;
 		//Forget this
@@ -102,12 +103,7 @@ void ASlashCharacter::Attack()
 	{
 		PlayAttackMontage();
 		ActionState = EActionState::EAS_Attacking;
-		UE_LOG(LogTemp, Warning, TEXT("[Diag] Attack fired. Equipped=%s"), *GetNameSafe(EquippedWeapon));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Diag] Attack blocked. ActionState=%d CharState=%d Equipped=%s"),
-			(int32)ActionState, (int32)CharacterState, *GetNameSafe(EquippedWeapon));
+		
 	}
 	
 }
@@ -123,9 +119,9 @@ void ASlashCharacter::PlayAttackMontage()
 	if (AnimInstance && AttackMontage)
 	{
 		AnimInstance->Montage_Play(AttackMontage);
-		const int32 Selection = FMath::RandRange(0, 1);
+		//const int32 Selection = FMath::RandRange(0, 1);
 		FName SectionName = FName();
-		switch (Selection)
+		switch (0)
 		{
 		case 0:
 			SectionName = FName("Attack1");
@@ -214,6 +210,7 @@ void ASlashCharacter::SetWeaponCollisionEnabled(ECollisionEnabled::Type Collisio
 	if (EquippedWeapon && EquippedWeapon->GetWeaponBox())
 	{
 		EquippedWeapon->GetWeaponBox()->SetCollisionEnabled(CollisionEnabled);
+		EquippedWeapon->IgnoreActors.Empty();
 	}
 }
 
