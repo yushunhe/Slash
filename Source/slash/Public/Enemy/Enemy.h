@@ -14,6 +14,7 @@ class UParticleSystem;
 class UAttributeComponent;
 class UWidgetComponent;
 class UHealthBarComponent;
+class UPawnSensingComponent;
 
 UCLASS()
 class SLASH_API AEnemy : public ACharacter, public IHitInterface
@@ -23,6 +24,8 @@ class SLASH_API AEnemy : public ACharacter, public IHitInterface
 public:
 	AEnemy();
 	virtual void Tick(float DeltaTime) override;
+	void CheckPatrolTarget();
+	void CheckCombatTarget();
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void GetHit_Implementation(const FVector& ImpactPoint) override;
 
@@ -36,6 +39,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere)
 	UHealthBarComponent* HealthBarWidget;
+
+	UPROPERTY(VisibleAnywhere)
+	UPawnSensingComponent* PawnSensing;
 
 	/**
 * Animation Montages
@@ -56,13 +62,41 @@ private:
 	AActor* CombatTarget;
 
 	UPROPERTY(EditAnywhere, Category = Combat)
-	double CombatRadius = 500.f;
+	double CombatRadius = 1500.f;
+
+	/**
+	* Navigation
+	*/
+
+	UPROPERTY()
+	class AAIController* EnemyController;
+
+	//Currennt patrol target
+	UPROPERTY(EditInstanceOnly, Category = "AI Navigation")
+	AActor* PatrolTarget;
+
+	UPROPERTY(EditInstanceOnly, Category = "AI Navigation")
+	TArray<AActor*> PatrolTargets;
+
+	//到达判定的容差，要明显大于 MoveTo 的接受半径
+	UPROPERTY(EditAnywhere, Category = "AI Navigation")
+	double PatrolRadius = 200.f;
+
+	UPROPERTY(EditAnywhere, Category = "AI Navigation")
+	double AttackRadius = 150.f;
+
+	UPROPERTY(EditAnywhere, Category = "AI Navigation")
+	double MoveAcceptanceRadius = 15.f;
+
+	FTimerHandle PatrolTimer;
+	void PatrolTimerFinished();
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
 	void Die(const FName& SectionName);
+	bool InTargetRange(AActor* Target, double Radius);
 	/**
 * Play montage function
 */
@@ -71,4 +105,16 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	EDeathPose DeathPose = EDeathPose::EDP_Alive;
 
+	UPROPERTY(EditAnywhere, Category = "AI Navigation")
+	float WaitMin = 4.f;
+	UPROPERTY(EditAnywhere, Category = "AI Navigation")
+	float WaitMax = 6.f;
+
+	EEnemyState EnemyState = EEnemyState::EES_Patrolling;
+protected:
+	void MoveToTarget(AActor* Target);
+	AActor* ChoosePatrolTarget();
+
+	UFUNCTION()
+	void PawnSeen(APawn* SeenPawn);
 };
