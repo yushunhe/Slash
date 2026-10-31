@@ -7,6 +7,10 @@ UAttributeComponent::UAttributeComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 
+	// 默认血量：否则没在蓝图里填值时 Health/MaxHealth 都是 0，
+	// IsAlive() 永远为 false，受击反应、血条都不会工作（还会除零）
+	Health = 100.f;
+	MaxHealth = 100.f;
 }
 
 
@@ -24,6 +28,7 @@ void UAttributeComponent::ReceiveDamage(float Damage)
 
 float UAttributeComponent::GetHealthPercent()
 {
+	if (MaxHealth <= 0.f) return 0.f;
 	return Health / MaxHealth;
 }
 
