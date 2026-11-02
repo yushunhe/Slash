@@ -11,6 +11,7 @@ class UCameraComponent;
 class AItem;
 class AWeapon;
 class UAnimMontage;
+class USlashOverlay;
 
 UCLASS()
 class SLASH_API ASlashCharacter : public ABaseCharacter
@@ -40,6 +41,24 @@ protected:
 	void LookUp(float Value);
 	void EKeyPressed();
 	virtual void Attack() override;
+
+	/**
+	* Death
+	*/
+	virtual void Die(const FName& SectionName) override;
+	void DirectionalDie(const FVector& ImpactPoint);
+
+	/** 死亡时直接切换成布娃娃物理 */
+	void StartRagdoll();
+
+	FVector DeathImpactPoint = FVector::ZeroVector;
+	FVector DeathImpactDirection = FVector::ZeroVector;
+
+	/**
+	* HUD
+	*/
+	void InitializeOverlay();
+	void InitializeAttributeDelegates();
 
 	/**
 	* Combat
@@ -79,6 +98,12 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = Montages)
 	UAnimMontage* EquipMontage;
+
+	UPROPERTY(EditAnywhere, Category = HUD)
+	TSubclassOf<USlashOverlay> SlashOverlayClass;
+
+	UPROPERTY()
+	USlashOverlay* SlashOverlay;
 
 	ECharacterState CharacterState = ECharacterState::ECS_Unequipped;
 
