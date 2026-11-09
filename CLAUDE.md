@@ -8,7 +8,7 @@ Unreal Engine 5.8 C++ third-person action game (`slash`), extended from DruidMec
 
 The project currently has melee combat, enemy AI, attributes/HUD, breakables, ragdoll death, and a third-person rifle prototype (`ARangedWeapon`: pickup/switch, hitscan fire, ammo, reload, ADS state). Ammo HUD and rifle animations are not implemented yet.
 
-Feature roadmap: the third-person shooting work is tracked in `docs/TPS_PLAN.md`.
+Feature roadmap: the third-person shooting plan is kept locally in `docs/TPS_PLAN.md` (gitignored).
 
 ## Build & run
 
