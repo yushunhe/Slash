@@ -43,3 +43,17 @@ enum class EEnemyState : uint8
 	EES_Engaged UMETA(DisplayName = "Engaged"),
 
 };
+
+UENUM(BlueprintType)
+enum class EWeaponType : uint8
+{
+	EWT_Melee UMETA(DisplayName = "Melee"),
+	EWT_Ranged UMETA(DisplayName = "Ranged")
+};
+
+UENUM(BlueprintType)
+enum class ECombatMode : uint8
+{
+	ECM_Melee UMETA(DisplayName = "Melee"),
+	ECM_Ranged UMETA(DisplayName = "Ranged")
+};

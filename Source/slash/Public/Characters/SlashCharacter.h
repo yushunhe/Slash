@@ -10,7 +10,9 @@ class USpringArmComponent;
 class UCameraComponent;
 class AItem;
 class AWeapon;
+class ARangedWeapon;
 class UAnimMontage;
+class UAnimSequence;
 class USlashOverlay;
 
 UCLASS()
@@ -28,6 +30,13 @@ public:
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
 	virtual void GetHit_Implementation(const FVector& ImpactPoint) override;
 
+	UFUNCTION(BlueprintCallable)
+	void AddAmmo(int32 Amount);
+
+	FORCEINLINE bool IsAiming() const { return bIsAiming; }
+	FORCEINLINE bool HasRifle() const { return bHasRifle; }
+	FORCEINLINE ECombatMode GetCombatMode() const { return CombatMode; }
+
 protected:
 
 	virtual void BeginPlay() override;
@@ -41,6 +50,21 @@ protected:
 	void LookUp(float Value);
 	void EKeyPressed();
 	virtual void Attack() override;
+
+	/** 左键：按当前武器分发近战/射击 */
+	void PrimaryActionPressed();
+	void PrimaryActionReleased();
+
+	/** 右键瞄准 */
+	void StartAim();
+	void StopAim();
+
+	void ReloadWeapon();
+	void SwitchWeapon();
+
+	/** 持枪站立/瞄准时播放的待机动画 */
+	void PlayRifleIdle();
+	void StopRifleIdle();
 
 	/**
 	* Death
@@ -109,6 +133,45 @@ private:
 
 	UPROPERTY(BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
 	EActionState ActionState = EActionState::EAS_Unoccupied;
+
+	/** 当前枪械；剑/近战仍由 EquippedWeapon 管理 */
+	UPROPERTY()
+	ARangedWeapon* EquippedRifle;
+
+	UPROPERTY()
+	AWeapon* EquippedMeleeWeapon;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	ECombatMode CombatMode = ECombatMode::ECM_Melee;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	bool bHasRifle = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	bool bIsAiming = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	float AimArmLength = 150.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	float AimFOV = 65.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Movement")
+	float AimWalkSpeed = 300.f;
+
+	/** 步枪待机动画（重定向后的 Idle Aiming），在 BP_SlashCharacter 里指定 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation")
+	UAnimSequence* RifleIdleAnimation;
+
+	UPROPERTY()
+	UAnimMontage* RifleIdleMontageInstance;
+
+	bool bRifleIdlePlaying = false;
+
+	/** 进入瞄准前的相机/移速，退出时恢复 */
+	float PreAimWalkSpeed = 600.f;
+	float PreAimArmLength = 300.f;
+	float PreAimFOV = 90.f;
 
 public:
 	FORCEINLINE void SetOverlappingItem(AItem* Item) { OverlappingItem = Item; }

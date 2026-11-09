@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Items/Item.h"
+#include "Characters/CharacterTypes.h"
 #include "Weapon.generated.h"
 
 class USoundBase;
@@ -17,7 +18,7 @@ class SLASH_API AWeapon : public AItem
 	GENERATED_BODY()
 public:
 	AWeapon();
-	void Equip(USceneComponent* InParent, FName InSocketName, AActor* NewOwner, APawn* NewInstigator);
+	virtual void Equip(USceneComponent* InParent, FName InSocketName, AActor* NewOwner, APawn* NewInstigator);
 	void DeactivateEmbers();
 	void DisableSphereCollision();
 	void PlayEquipSound();
@@ -36,6 +37,10 @@ protected:
 
 	UFUNCTION(BlueprintImplementableEvent)
 	void CreateFields(const FVector& FieldLocation);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon Properties")
+	EWeaponType WeaponType = EWeaponType::EWT_Melee;
+
 private:
 
 	void BoxTrace(FHitResult& BoxHit);
@@ -60,4 +65,7 @@ private:
 
 public:
 	FORCEINLINE UBoxComponent* GetWeaponBox() const { return WeaponBox; }
+	FORCEINLINE EWeaponType GetWeaponType() const { return WeaponType; }
+	virtual bool IsRanged() const { return WeaponType == EWeaponType::EWT_Ranged; }
+	FORCEINLINE float GetDamage() const { return Damage; }
 };

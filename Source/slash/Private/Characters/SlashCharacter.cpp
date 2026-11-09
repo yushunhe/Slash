@@ -5,8 +5,10 @@
 #include "GameFramework/PlayerController.h"
 #include "Items/Item.h"
 #include "Items/Weapons/Weapon.h"
+#include "Items/Weapons/RangedWeapon.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
 #include "Blueprint/UserWidget.h"
 #include "HUD/SlashHUD.h"
 #include "HUD/SlashOverlay.h"
@@ -94,6 +96,20 @@ void ASlashCharacter::InitializeAttributeDelegates()
 void ASlashCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// 持枪时：站立/瞄准播放 RifleIdleAnimation，移动/跳跃/死亡时让位给现有动画
+	if (CombatMode == ECombatMode::ECM_Ranged && EquippedRifle && IsAlive())
+	{
+		const bool bMoving = GetVelocity().SizeSquared2D() > 100.f || GetCharacterMovement()->IsFalling();
+		if (bMoving)
+		{
+			StopRifleIdle();
+		}
+		else
+		{
+			PlayRifleIdle();
+		}
+	}
 }
 
 void ASlashCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -107,7 +123,12 @@ void ASlashCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 
 	PlayerInputComponent->BindAction(FName("Jump"), IE_Pressed, this, &ASlashCharacter::Jump);
 	PlayerInputComponent->BindAction(FName("Equip"), IE_Pressed, this, &ASlashCharacter::EKeyPressed);
-	PlayerInputComponent->BindAction(FName("Attack"), IE_Pressed, this, &ASlashCharacter::Attack);
+	PlayerInputComponent->BindAction(FName("Attack"), IE_Pressed, this, &ASlashCharacter::PrimaryActionPressed);
+	PlayerInputComponent->BindAction(FName("Attack"), IE_Released, this, &ASlashCharacter::PrimaryActionReleased);
+	PlayerInputComponent->BindAction(FName("Aim"), IE_Pressed, this, &ASlashCharacter::StartAim);
+	PlayerInputComponent->BindAction(FName("Aim"), IE_Released, this, &ASlashCharacter::StopAim);
+	PlayerInputComponent->BindAction(FName("Reload"), IE_Pressed, this, &ASlashCharacter::ReloadWeapon);
+	PlayerInputComponent->BindAction(FName("SwitchWeapon"), IE_Pressed, this, &ASlashCharacter::SwitchWeapon);
 }
 
 void ASlashCharacter::Jump()
@@ -159,6 +180,13 @@ void ASlashCharacter::GetHit_Implementation(const FVector& ImpactPoint)
 
 void ASlashCharacter::Die(const FName& /*SectionName*/)
 {
+	StopRifleIdle();
+
+	if (EquippedRifle)
+	{
+		EquippedRifle->StopFire();
+	}
+
 	ActionState = EActionState::EAS_Dead;
 
 	GetCharacterMovement()->DisableMovement();
@@ -254,10 +282,6 @@ void ASlashCharacter::EKeyPressed()
 	AWeapon* OverlappingWeapon = Cast<AWeapon>(OverlappingItem);
 	if (OverlappingWeapon)
 	{
-		if (EquippedWeapon)
-		{
-			EquippedWeapon->Destroy();
-		}
 		EquipWeapon(OverlappingWeapon);
 	}
 	else
@@ -283,12 +307,245 @@ void ASlashCharacter::Attack()
 	}
 }
 
+void ASlashCharacter::PrimaryActionPressed()
+{
+	if (CombatMode == ECombatMode::ECM_Ranged && EquippedRifle)
+	{
+		EquippedRifle->StartFire();
+		return;
+	}
+
+	Attack();
+}
+
+void ASlashCharacter::PrimaryActionReleased()
+{
+	if (EquippedRifle)
+	{
+		EquippedRifle->StopFire();
+	}
+}
+
+void ASlashCharacter::StartAim()
+{
+	if (bIsAiming || CombatMode != ECombatMode::ECM_Ranged || !EquippedRifle)
+	{
+		return;
+	}
+
+	bIsAiming = true;
+	EquippedRifle->SetAiming(true);
+
+	// 记录进入瞄准前的值，退出时恢复（避免覆盖蓝图里调过的相机/移速）
+	PreAimWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+	PreAimArmLength = CameraBoom ? CameraBoom->TargetArmLength : 300.f;
+	PreAimFOV = ViewCamera ? ViewCamera->FieldOfView : 90.f;
+
+	GetCharacterMovement()->MaxWalkSpeed = AimWalkSpeed;
+	bUseControllerRotationYaw = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+
+	if (CameraBoom) CameraBoom->TargetArmLength = AimArmLength;
+	if (ViewCamera) ViewCamera->SetFieldOfView(AimFOV);
+}
+
+void ASlashCharacter::StopAim()
+{
+	if (!bIsAiming)
+	{
+		return;
+	}
+
+	bIsAiming = false;
+	if (EquippedRifle)
+	{
+		EquippedRifle->SetAiming(false);
+	}
+
+	GetCharacterMovement()->MaxWalkSpeed = PreAimWalkSpeed;
+	bUseControllerRotationYaw = false;
+	GetCharacterMovement()->bOrientRotationToMovement = true;
+
+	if (CameraBoom) CameraBoom->TargetArmLength = PreAimArmLength;
+	if (ViewCamera) ViewCamera->SetFieldOfView(PreAimFOV);
+}
+
+void ASlashCharacter::ReloadWeapon()
+{
+	if (EquippedRifle)
+	{
+		EquippedRifle->Reload();
+	}
+}
+
+void ASlashCharacter::SwitchWeapon()
+{
+	// 还没有步枪时，站在步枪旁边按 Q 也可以直接拾取（E 仍是通用拾取键）
+	if (!EquippedRifle && OverlappingItem)
+	{
+		if (ARangedWeapon* Rifle = Cast<ARangedWeapon>(OverlappingItem))
+		{
+			EquipWeapon(Rifle);
+			return;
+		}
+	}
+
+	if (CombatMode == ECombatMode::ECM_Melee)
+	{
+		if (!EquippedRifle)
+		{
+			return;
+		}
+
+		// 收起近战武器，拿出步枪
+		if (EquippedMeleeWeapon)
+		{
+			EquippedMeleeWeapon->AttachMeshToSocket(GetMesh(), FName("thighsocket"));
+		}
+		EquippedRifle->AttachMeshToSocket(GetMesh(), FName("Weapon"));
+		EquippedWeapon = nullptr;
+		CharacterState = ECharacterState::ECS_Unequipped;
+		CombatMode = ECombatMode::ECM_Ranged;
+		bHasRifle = true;
+		PlayRifleIdle();
+		return;
+	}
+
+	// 从步枪切回近战
+	if (!EquippedRifle || !EquippedMeleeWeapon)
+	{
+		return;
+	}
+
+	EquippedRifle->StopFire();
+	StopAim();
+	StopRifleIdle();
+	EquippedRifle->AttachMeshToSocket(GetMesh(), FName("SpineSocket"));
+	EquippedMeleeWeapon->AttachMeshToSocket(GetMesh(), FName("RightHandSocket"));
+	EquippedWeapon = EquippedMeleeWeapon;
+	CharacterState = ECharacterState::ECS_EquippedOneHandedWeapon;
+	CombatMode = ECombatMode::ECM_Melee;
+}
+
+void ASlashCharacter::PlayRifleIdle()
+{
+	if (!RifleIdleAnimation || bRifleIdlePlaying)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = MeshComp->GetAnimInstance();
+	if (!AnimInstance)
+	{
+		return;
+	}
+
+	// 通过现有 DefaultSlot 播放动态蒙太奇；LoopCount 设很大，靠移动/切枪来停止
+	constexpr int32 LoopCount = 100000;
+	RifleIdleMontageInstance = AnimInstance->PlaySlotAnimationAsDynamicMontage(
+		RifleIdleAnimation,
+		FName("DefaultSlot"),
+		0.2f,
+		0.2f,
+		1.f,
+		LoopCount,
+		0.f,
+		0.f);
+
+	bRifleIdlePlaying = RifleIdleMontageInstance != nullptr;
+}
+
+void ASlashCharacter::StopRifleIdle()
+{
+	if (!bRifleIdlePlaying)
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = MeshComp->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.2f, RifleIdleMontageInstance);
+		}
+	}
+
+	RifleIdleMontageInstance = nullptr;
+	bRifleIdlePlaying = false;
+}
+
+void ASlashCharacter::AddAmmo(int32 Amount)
+{
+	if (EquippedRifle)
+	{
+		EquippedRifle->AddReserveAmmo(Amount);
+	}
+}
+
 void ASlashCharacter::EquipWeapon(AWeapon* Weapon)
 {
+	if (!Weapon) return;
+
+	if (bIsAiming)
+	{
+		StopAim();
+	}
+
+	if (Weapon->IsRanged())
+	{
+		ARangedWeapon* Rifle = Cast<ARangedWeapon>(Weapon);
+		if (!Rifle) return;
+
+		if (EquippedRifle && EquippedRifle != Rifle)
+		{
+			EquippedRifle->StopFire();
+			EquippedRifle->Destroy();
+		}
+
+		// 收起近战武器，拿出步枪
+		if (EquippedMeleeWeapon)
+		{
+			EquippedMeleeWeapon->AttachMeshToSocket(GetMesh(), FName("thighsocket"));
+		}
+
+		EquippedRifle = Rifle;
+		EquippedRifle->Equip(GetMesh(), FName("Weapon"), this, this);
+		EquippedWeapon = nullptr;
+		OverlappingItem = nullptr;
+		CharacterState = ECharacterState::ECS_Unequipped;
+		CombatMode = ECombatMode::ECM_Ranged;
+		bHasRifle = true;
+		PlayRifleIdle();
+		return;
+	}
+
+	// 近战武器
+	StopRifleIdle();
+	if (EquippedMeleeWeapon && EquippedMeleeWeapon != Weapon)
+	{
+		EquippedMeleeWeapon->Destroy();
+	}
+
+	// 有步枪时先收起来
+	if (EquippedRifle)
+	{
+		EquippedRifle->StopFire();
+		EquippedRifle->AttachMeshToSocket(GetMesh(), FName("SpineSocket"));
+	}
+
 	Weapon->Equip(GetMesh(), FName("RightHandSocket"), this, this);
-	CharacterState = ECharacterState::ECS_EquippedOneHandedWeapon;
-	OverlappingItem = nullptr;
+	EquippedMeleeWeapon = Weapon;
 	EquippedWeapon = Weapon;
+	OverlappingItem = nullptr;
+	CharacterState = ECharacterState::ECS_EquippedOneHandedWeapon;
+	CombatMode = ECombatMode::ECM_Melee;
+	bHasRifle = EquippedRifle != nullptr;
 }
 
 void ASlashCharacter::AttackEnd()
@@ -298,7 +555,9 @@ void ASlashCharacter::AttackEnd()
 
 bool ASlashCharacter::CanAttack()
 {
-	return IsUnoccupied() && CharacterState != ECharacterState::ECS_Unequipped;
+	return CombatMode == ECombatMode::ECM_Melee
+		&& IsUnoccupied()
+		&& CharacterState != ECharacterState::ECS_Unequipped;
 }
 
 bool ASlashCharacter::CanDisarm()

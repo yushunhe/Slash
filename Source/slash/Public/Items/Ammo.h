@@ -21,5 +21,5 @@ private:
 	USoundBase* PickUpSound;
 
 	UPROPERTY(EditAnywhere, Category = "Ammo Properties")
-	int32 AmmoCount;
+	int32 AmmoCount = 30;
 };
