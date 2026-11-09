@@ -464,8 +464,11 @@ float AEnemy::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AC
 		Attributes->ReceiveDamage(DamageAmount);
 		HealthBarWidget->SetHealthPercent(Attributes->GetHealthPercent());
 	}
-	CombatTarget = EventInstigator->GetPawn();
-	ChaseTarget();
+	CombatTarget = EventInstigator ? EventInstigator->GetPawn() : nullptr;
+	if (CombatTarget)
+	{
+		ChaseTarget();
+	}
 	return DamageAmount;
 }
 

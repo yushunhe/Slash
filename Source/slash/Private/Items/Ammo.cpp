@@ -6,12 +6,13 @@
 void AAmmo::OnSphereOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	ASlashCharacter* SlashCharacter = Cast<ASlashCharacter>(OtherActor);
-	if (SlashCharacter)
+	if (SlashCharacter && SlashCharacter->HasRifle())
 	{
 		if(PickUpSound)
 		{
 			UGameplayStatics::PlaySoundAtLocation(this, PickUpSound, GetActorLocation());
 		}
+		SlashCharacter->AddAmmo(AmmoCount);
 		Destroy();
 	}
 }
