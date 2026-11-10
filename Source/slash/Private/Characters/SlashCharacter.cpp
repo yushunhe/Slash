@@ -37,6 +37,7 @@ ASlashCharacter::ASlashCharacter()
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetRootComponent());
 	CameraBoom->TargetArmLength = 300.f;
+	CameraBoom->bUsePawnControlRotation = true;
 
 	ViewCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ViewCamera"));
 	ViewCamera->SetupAttachment(CameraBoom);
@@ -48,6 +49,7 @@ void ASlashCharacter::BeginPlay()
 
 	Tags.Add(FName("SlashCharacter"));
 
+	CaptureHipCameraValues();
 	InitializeOverlay();
 	InitializeAttributeDelegates();
 }
@@ -96,6 +98,8 @@ void ASlashCharacter::InitializeAttributeDelegates()
 void ASlashCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	UpdateAimCamera(DeltaTime);
 
 	// 持枪时：站立/瞄准播放 RifleIdleAnimation，移动/跳跃/死亡时让位给现有动画
 	if (CombatMode == ECombatMode::ECM_Ranged && EquippedRifle && IsAlive())
@@ -180,6 +184,7 @@ void ASlashCharacter::GetHit_Implementation(const FVector& ImpactPoint)
 
 void ASlashCharacter::Die(const FName& /*SectionName*/)
 {
+	StopAim();
 	StopRifleIdle();
 
 	if (EquippedRifle)
@@ -336,17 +341,15 @@ void ASlashCharacter::StartAim()
 	bIsAiming = true;
 	EquippedRifle->SetAiming(true);
 
-	// 记录进入瞄准前的值，退出时恢复（避免覆盖蓝图里调过的相机/移速）
+	// 记录进入瞄准前的移速，退出时恢复（避免覆盖蓝图里调过的值）
 	PreAimWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
-	PreAimArmLength = CameraBoom ? CameraBoom->TargetArmLength : 300.f;
-	PreAimFOV = ViewCamera ? ViewCamera->FieldOfView : 90.f;
-
 	GetCharacterMovement()->MaxWalkSpeed = AimWalkSpeed;
+
+	// 瞄准时角色朝向跟随相机，保证射击方向与准星一致
 	bUseControllerRotationYaw = true;
 	GetCharacterMovement()->bOrientRotationToMovement = false;
 
-	if (CameraBoom) CameraBoom->TargetArmLength = AimArmLength;
-	if (ViewCamera) ViewCamera->SetFieldOfView(AimFOV);
+	// 相机由 UpdateAimCamera 在 Tick 里平滑过渡到过肩视角
 }
 
 void ASlashCharacter::StopAim()
@@ -366,8 +369,52 @@ void ASlashCharacter::StopAim()
 	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 
-	if (CameraBoom) CameraBoom->TargetArmLength = PreAimArmLength;
-	if (ViewCamera) ViewCamera->SetFieldOfView(PreAimFOV);
+	// 相机由 UpdateAimCamera 在 Tick 里平滑回到髋射视角
+}
+
+void ASlashCharacter::CaptureHipCameraValues()
+{
+	if (CameraBoom)
+	{
+		HipArmLength = CameraBoom->TargetArmLength;
+		HipSocketOffset = CameraBoom->SocketOffset;
+		HipTargetOffset = CameraBoom->TargetOffset;
+	}
+
+	if (ViewCamera)
+	{
+		HipFOV = ViewCamera->FieldOfView;
+	}
+}
+
+void ASlashCharacter::UpdateAimCamera(float DeltaTime)
+{
+	if (!CameraBoom) return;
+
+	// 已经完全回到髋射视角：收尾一次后不再每帧写相机
+	if (!bIsAiming && AimBlend <= KINDA_SMALL_NUMBER)
+	{
+		if (AimBlend > 0.f)
+		{
+			AimBlend = 0.f;
+			CameraBoom->TargetArmLength = HipArmLength;
+			CameraBoom->SocketOffset = HipSocketOffset;
+			CameraBoom->TargetOffset = HipTargetOffset;
+			if (ViewCamera) ViewCamera->SetFieldOfView(HipFOV);
+		}
+		return;
+	}
+
+	AimBlend = FMath::FInterpTo(AimBlend, bIsAiming ? 1.f : 0.f, DeltaTime, AimCameraInterpSpeed);
+
+	CameraBoom->TargetArmLength = FMath::Lerp(HipArmLength, AimArmLength, AimBlend);
+	CameraBoom->SocketOffset = FMath::Lerp(HipSocketOffset, AimSocketOffset, AimBlend);
+	CameraBoom->TargetOffset = FMath::Lerp(HipTargetOffset, AimTargetOffset, AimBlend);
+
+	if (ViewCamera)
+	{
+		ViewCamera->SetFieldOfView(FMath::Lerp(HipFOV, AimFOV, AimBlend));
+	}
 }
 
 void ASlashCharacter::ReloadWeapon()

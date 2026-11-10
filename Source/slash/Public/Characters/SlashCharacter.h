@@ -59,6 +59,12 @@ protected:
 	void StartAim();
 	void StopAim();
 
+	/** 记录蓝图中配置的髋射相机参数，瞄准结束后回到这里 */
+	void CaptureHipCameraValues();
+
+	/** 每帧在髋射视角和过肩瞄准视角之间平滑过渡 */
+	void UpdateAimCamera(float DeltaTime);
+
 	void ReloadWeapon();
 	void SwitchWeapon();
 
@@ -151,10 +157,22 @@ private:
 	bool bIsAiming = false;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
-	float AimArmLength = 150.f;
+	float AimArmLength = 175.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Camera")
 	float AimFOV = 65.f;
+
+	/** 瞄准时相机相对角色的偏移（Y 向右、Z 向上），把相机让到右肩外，角色落在画面左下 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	FVector AimSocketOffset = FVector(0.f, 52.f, 45.f);
+
+	/** 瞄准时抬高的注视点，让相机略微俯视角色 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	FVector AimTargetOffset = FVector(0.f, 0.f, 40.f);
+
+	/** 进入/退出瞄准时相机过渡的快慢 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camera")
+	float AimCameraInterpSpeed = 12.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Movement")
 	float AimWalkSpeed = 300.f;
@@ -168,10 +186,17 @@ private:
 
 	bool bRifleIdlePlaying = false;
 
-	/** 进入瞄准前的相机/移速，退出时恢复 */
+	/** 进入瞄准前的移速，退出时恢复 */
 	float PreAimWalkSpeed = 600.f;
-	float PreAimArmLength = 300.f;
-	float PreAimFOV = 90.f;
+
+	/** 0 = 髋射视角，1 = 完整过肩瞄准视角 */
+	float AimBlend = 0.f;
+
+	/** BeginPlay 时记录的默认相机参数（蓝图中配置的值） */
+	float HipArmLength = 300.f;
+	float HipFOV = 90.f;
+	FVector HipSocketOffset = FVector::ZeroVector;
+	FVector HipTargetOffset = FVector::ZeroVector;
 
 public:
 	FORCEINLINE void SetOverlappingItem(AItem* Item) { OverlappingItem = Item; }

@@ -60,6 +60,11 @@ Engine installed at `C:\Program Files\Epic Games\UE_5.8`.
 - Names are `FName`-based and case-insensitive (`Moveforward` matches `MoveForward`; `thighsocket` matches `thighSocket`).
 - Left mouse button is `Attack` and now dispatches by weapon: melee plays the attack montage, rifle calls `StartFire()`/`StopFire()`.
 
+### Camera
+
+- `ASlashCharacter` owns `CameraBoom` (a `USpringArmComponent` with `bUsePawnControlRotation`) and `ViewCamera`. Hip-fire view is directly behind the character at 300 units, 90° FOV, no offsets.
+- Right-click aim blends, over `AimCameraInterpSpeed` in `Tick`, from those hip values to an over-the-right-shoulder view (`AimArmLength`, `AimFOV`, `AimSocketOffset`, `AimTargetOffset`), so the character sits in the lower-left and the crosshair stays clear. Hip values are captured from the Blueprint in `BeginPlay`; `CaptureHipCameraValues`/`UpdateAimCamera` own the transition. `AimSocketOffset` is in boom-local space (Y right, Z up).
+
 ### HUD
 
 - `ASlashHUD` creates `USlashOverlay` from `SlashOverlayClass` (BP_SlashHUD points it at `WBP_SlashOverlay`).
