@@ -4,12 +4,14 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
 #include "CollisionQueryParams.h"
 #include "DrawDebugHelpers.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/DamageType.h"
 #include "GameFramework/PlayerController.h"
@@ -84,15 +86,10 @@ void ARangedWeapon::FireOnce()
 	--AmmoInMagazine;
 	OnAmmoChanged.Broadcast(AmmoInMagazine, ReserveAmmo);
 
-	FHitResult Hit;
 	FVector ShotDirection = FVector::ForwardVector;
-	PerformTrace(Hit, ShotDirection);
-	ApplyShotDamage(Hit, ShotDirection);
-
-	if (Muzzle)
-	{
-		PlayFireFX(Muzzle->GetComponentLocation(), Hit);
-	}
+	ComputePlayerShotDirection(ShotDirection);
+	const FVector MuzzleLocation = Muzzle ? Muzzle->GetComponentLocation() : GetActorLocation();
+	ResolveShot(MuzzleLocation, ShotDirection);
 
 	// 后坐力：相机上抬 + 少量随机水平偏移
 	if (APlayerController* PlayerController = Cast<APlayerController>(GetInstigatorController()))
@@ -104,12 +101,48 @@ void ARangedWeapon::FireOnce()
 	if (AmmoInMagazine <= 0)
 	{
 		StopFire();
+
+		// 打空后自动换弹；没有备弹时 Reload 会自己返回
+		if (bAutoReload)
+		{
+			Reload();
+		}
 	}
 }
 
-void ARangedWeapon::PerformTrace(FHitResult& OutHit, FVector& OutShotDirection) const
+FRotator ARangedWeapon::GetBarrelRotation() const
 {
-	OutHit = FHitResult();
+	if (ItemMesh)
+	{
+		// 网格长轴为 +Y，也就是枪管朝向
+		return ItemMesh->GetRightVector().Rotation();
+	}
+	return GetActorRotation();
+}
+
+void ARangedWeapon::FireAt(const FVector& TargetPoint)
+{
+	if (!CanFire())
+	{
+		return;
+	}
+
+	const FVector MuzzleLocation = Muzzle ? Muzzle->GetComponentLocation() : GetActorLocation();
+	const FVector BaseDirection = (TargetPoint - MuzzleLocation).GetSafeNormal();
+	if (BaseDirection.IsNearlyZero())
+	{
+		return;
+	}
+
+	--AmmoInMagazine;
+	OnAmmoChanged.Broadcast(AmmoInMagazine, ReserveAmmo);
+
+	const FVector ShotDirection = FMath::VRandCone(BaseDirection, FMath::DegreesToRadians(AIAimSpreadDegrees));
+	ResolveShot(MuzzleLocation, ShotDirection);
+}
+
+void ARangedWeapon::ComputePlayerShotDirection(FVector& OutShotDirection) const
+{
 	OutShotDirection = FVector::ForwardVector;
 
 	AController* OwnerController = GetInstigatorController();
@@ -123,7 +156,7 @@ void ARangedWeapon::PerformTrace(FHitResult& OutHit, FVector& OutShotDirection) 
 	FRotator ViewRotation;
 	OwnerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
 
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(RangedWeaponTrace), false, this);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(RangedWeaponAim), false, this);
 	Params.AddIgnoredActor(this);
 	Params.AddIgnoredActor(GetOwner());
 
@@ -133,26 +166,38 @@ void ARangedWeapon::PerformTrace(FHitResult& OutHit, FVector& OutShotDirection) 
 	World->LineTraceSingleByChannel(AimHit, ViewLocation, AimEnd, ECC_Visibility, Params);
 	const FVector AimPoint = AimHit.bBlockingHit ? AimHit.ImpactPoint : AimEnd;
 
-	// 2) 枪口 -> 准星点，避免隔墙命中
+	// 2) 枪口指向准星点，加上散布
 	const FVector MuzzleLocation = Muzzle ? Muzzle->GetComponentLocation() : GetActorLocation();
 	const float SpreadRadians = FMath::DegreesToRadians(bIsAiming ? AimSpreadDegrees : HipSpreadDegrees);
 	const FVector BaseDirection = (AimPoint - MuzzleLocation).GetSafeNormal();
 	OutShotDirection = FMath::VRandCone(BaseDirection, SpreadRadians);
+}
 
-	const FVector ShotEnd = MuzzleLocation + OutShotDirection * Range;
-	World->LineTraceSingleByChannel(
-		OutHit,
-		MuzzleLocation,
-		ShotEnd,
-		ECC_Visibility,
-		Params);
+void ARangedWeapon::ResolveShot(const FVector& MuzzleLocation, const FVector& ShotDirection)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(RangedWeaponShot), false, this);
+	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(GetOwner());
+
+	FHitResult Hit;
+	const FVector ShotEnd = MuzzleLocation + ShotDirection * Range;
+	World->LineTraceSingleByChannel(Hit, MuzzleLocation, ShotEnd, ECC_Visibility, Params);
 
 	if (bDrawDebugShot)
 	{
-		const FVector DebugEnd = OutHit.bBlockingHit ? OutHit.ImpactPoint : ShotEnd;
+		const FVector DebugEnd = Hit.bBlockingHit ? Hit.ImpactPoint : ShotEnd;
 		DrawDebugLine(World, MuzzleLocation, DebugEnd, FColor::Red, false, 1.5f, 0, 1.5f);
 		DrawDebugPoint(World, DebugEnd, 8.f, FColor::Yellow, false, 1.5f);
 	}
+
+	ApplyShotDamage(Hit, ShotDirection);
+	PlayFireFX(MuzzleLocation, Hit);
 }
 
 void ARangedWeapon::ApplyShotDamage(const FHitResult& Hit, const FVector& ShotDirection)
@@ -220,13 +265,26 @@ void ARangedWeapon::Reload()
 	bIsReloading = true;
 	StopFire();
 
-	if (ReloadMontage)
+	UAnimSequence* ReloadSequence = SelectReloadAnimation();
+
+	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
 	{
-		if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
+		if (USkeletalMeshComponent* OwnerMesh = OwnerCharacter->GetMesh())
 		{
-			if (USkeletalMeshComponent* OwnerMesh = OwnerCharacter->GetMesh())
+			if (UAnimInstance* AnimInstance = OwnerMesh->GetAnimInstance())
 			{
-				if (UAnimInstance* AnimInstance = OwnerMesh->GetAnimInstance())
+				if (ReloadSequence)
+				{
+					// 和待机/开火一样走插槽，避免全身姿态被状态机顶掉
+					AnimInstance->PlaySlotAnimationAsDynamicMontage(
+						ReloadSequence,
+						ReloadSlotName,
+						0.1f,
+						0.1f,
+						1.f,
+						1);
+				}
+				else if (ReloadMontage)
 				{
 					AnimInstance->Montage_Play(ReloadMontage);
 				}
@@ -234,7 +292,19 @@ void ARangedWeapon::Reload()
 		}
 	}
 
-	GetWorldTimerManager().SetTimer(ReloadTimer, this, &ARangedWeapon::FinishReload, ReloadTime, false);
+	// 时长跟动画对齐，动画缺失时退回配置的 ReloadTime
+	const float ReloadDuration = ReloadSequence ? ReloadSequence->GetPlayLength() : ReloadTime;
+	GetWorldTimerManager().SetTimer(ReloadTimer, this, &ARangedWeapon::FinishReload, ReloadDuration, false);
+}
+
+UAnimSequence* ARangedWeapon::SelectReloadAnimation() const
+{
+	const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	const bool bMoving = OwnerCharacter &&
+		(OwnerCharacter->GetVelocity().SizeSquared2D() > FMath::Square(ReloadMovingSpeedThreshold) ||
+			OwnerCharacter->GetCharacterMovement()->IsFalling());
+
+	return (bMoving && ReloadMovingAnimation) ? ReloadMovingAnimation : ReloadStandingAnimation;
 }
 
 void ARangedWeapon::FinishReload()

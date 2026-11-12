@@ -35,6 +35,7 @@ public:
 
 	FORCEINLINE bool IsAiming() const { return bIsAiming; }
 	FORCEINLINE bool HasRifle() const { return bHasRifle; }
+	FORCEINLINE ARangedWeapon* GetEquippedRifle() const { return EquippedRifle; }
 	FORCEINLINE ECombatMode GetCombatMode() const { return CombatMode; }
 
 protected:
@@ -65,12 +66,40 @@ protected:
 	/** 每帧在髋射视角和过肩瞄准视角之间平滑过渡 */
 	void UpdateAimCamera(float DeltaTime);
 
+	/** 瞄准时让角色朝向 = 相机朝向 + AimYawOffset，使持枪姿势对准准星 */
+	void UpdateAimFacing();
+
+	/** 正在换弹：换弹动画期间锁住移动，等动画播完 */
+	bool IsReloadingRifle() const;
+
+	/** 髋射开火时把视角平滑转向枪口方向 */
+	void UpdateFireCameraAlignment(float DeltaTime);
+
+	/** 是否在髋射开火时把视角对齐到枪口 */
+	UPROPERTY(EditDefaultsOnly, Category = "Aim")
+	bool bAlignCameraToMuzzleOnFire = true;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Aim")
+	float FireCameraAlignSpeed = 10.f;
+
+	/** 移动速度超过这个值就不做对齐，避免视角跟着枪转、输入方向又跟着视角转 */
+	UPROPERTY(EditDefaultsOnly, Category = "Aim")
+	float FireCameraAlignMaxSpeed = 150.f;
+
+	/** 瞄准时角色相对相机偏转的角度（度，正值向右）；用来补偿动画里持枪的朝向偏差 */
+	UPROPERTY(EditDefaultsOnly, Category = "Aim")
+	float AimYawOffset = 10.f;
+
 	void ReloadWeapon();
 	void SwitchWeapon();
 
 	/** 持枪站立/瞄准时播放的待机动画 */
 	void PlayRifleIdle();
 	void StopRifleIdle();
+
+	/** 按住左键射击时循环播放的开火动画，优先于待机动画 */
+	void PlayRifleFire();
+	void StopRifleFire();
 
 	/**
 	* Death
@@ -185,6 +214,19 @@ private:
 	UAnimMontage* RifleIdleMontageInstance;
 
 	bool bRifleIdlePlaying = false;
+
+	/** 步枪开火动画（重定向后的 Firing Rifle），在 BP_SlashCharacter 里指定 */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation")
+	UAnimSequence* RifleFireAnimation;
+
+	/** 开火时步枪挂到的 socket；平时仍挂在 "Weapon" 上，方便单独调开火姿势的持枪位置 */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName RifleFireSocketName = FName("WeaponFire");
+
+	UPROPERTY()
+	UAnimMontage* RifleFireMontageInstance;
+
+	bool bRifleFirePlaying = false;
 
 	/** 进入瞄准前的移速，退出时恢复 */
 	float PreAimWalkSpeed = 600.f;

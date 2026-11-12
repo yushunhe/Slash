@@ -11,6 +11,7 @@
 #include "Perception/PawnSensingComponent.h"
 #include "HUD/HealthBarComponent.h"
 #include "Items/Weapons/Weapon.h"
+#include "Items/Weapons/RangedWeapon.h"
 #include "AIController.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -49,6 +50,11 @@ void AEnemy::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	if (IsDead()) return;
+
+	if (bIsBurstFiring)
+	{
+		FaceCombatTarget(DeltaTime);
+	}
 
 	if (EnemyState > EEnemyState::EES_Patrolling)
 	{
@@ -99,6 +105,7 @@ void AEnemy::Die(const FName& SectionName)
 	EnemyState = EEnemyState::EES_Dead;
 	PlayMontageSection(DeathMontage, SectionName);
 	ClearAttackTimer();
+	StopBurst();
 	ClearPatrolTimer();
 	HideHealthBar();
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -124,7 +131,14 @@ void AEnemy::Attack()
 	if (CombatTarget == nullptr || !IsInsideAttackRadius() || IsDead()) return;
 
 	EnemyState = EEnemyState::EES_Engaged;
-	PlayAttackMontage();
+	if (GetRangedWeapon())
+	{
+		StartBurst();
+	}
+	else
+	{
+		PlayAttackMontage();
+	}
 }
 
 bool AEnemy::CanAttack()
@@ -262,10 +276,17 @@ void AEnemy::CheckCombatTarget()
 		LoseInterest();
 		if (!IsEngaged()) StartPatrolling();
 	}
-	else if (IsOutsideAttackRadius() && !IsChasing())
+	else if (IsOutsideAttackRadius())
 	{
 		ClearAttackTimer();
-		if (!IsEngaged()) ChaseTarget();
+		// 上一次 MoveTo 可能因导航尚未生成而失败，之后 IsChasing() 一直是真就再也不会重发，
+		// 所以这里按间隔重试，直到真正走起来
+		const bool bRetryDue =
+			GetWorld() && (GetWorld()->GetTimeSeconds() - LastChaseAttemptTime) > ChaseRetryInterval;
+		if (!IsEngaged() && !IsMovingToTarget() && bRetryDue)
+		{
+			ChaseTarget();
+		}
 	}
 	else if (CanAttack())
 	{
@@ -306,7 +327,13 @@ void AEnemy::ChaseTarget()
 {
 	EnemyState = EEnemyState::EES_Chasing;
 	GetCharacterMovement()->MaxWalkSpeed = ChasingSpeed;
+	LastChaseAttemptTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 	MoveToTarget(CombatTarget);
+}
+
+bool AEnemy::IsMovingToTarget() const
+{
+	return EnemyController && EnemyController->GetMoveStatus() == EPathFollowingStatus::Moving;
 }
 
 bool AEnemy::IsOutsideCombatRadius()
@@ -316,12 +343,12 @@ bool AEnemy::IsOutsideCombatRadius()
 
 bool AEnemy::IsOutsideAttackRadius()
 {
-	return !InTargetRange(CombatTarget, AttackRadius);
+	return !InTargetRange(CombatTarget, GetEngageRadius());
 }
 
 bool AEnemy::IsInsideAttackRadius()
 {
-	return InTargetRange(CombatTarget, AttackRadius);
+	return InTargetRange(CombatTarget, GetEngageRadius());
 }
 
 bool AEnemy::IsChasing()
@@ -375,10 +402,94 @@ void AEnemy::ClearAttackTimer()
 	GetWorldTimerManager().ClearTimer(AttackTimer);
 }
 
+ARangedWeapon* AEnemy::GetRangedWeapon() const
+{
+	return Cast<ARangedWeapon>(EquippedWeapon);
+}
+
+double AEnemy::GetEngageRadius() const
+{
+	return GetRangedWeapon() ? ShootRadius : AttackRadius;
+}
+
+void AEnemy::StartBurst()
+{
+	BurstShotsFired = 0;
+	bIsBurstFiring = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+
+	// 先设计时器再开第一枪：若第一枪就结束或换弹，计时器会被改写/清掉
+	GetWorldTimerManager().SetTimer(BurstTimer, this, &AEnemy::FireBurstShot, BurstFireInterval, true);
+	FireBurstShot();
+}
+
+void AEnemy::FireBurstShot()
+{
+	if (IsDead())
+	{
+		StopBurst();
+		return;
+	}
+
+	ARangedWeapon* Rifle = GetRangedWeapon();
+	if (Rifle == nullptr || CombatTarget == nullptr)
+	{
+		FinishBurst();
+		return;
+	}
+
+	if (Rifle->GetAmmoInMagazine() <= 0)
+	{
+		// 弹匣打空：保持 Engaged 换弹，换弹完成后回到 AttackEnd 重新评估
+		StopBurst();
+		Rifle->Reload();
+		GetWorldTimerManager().SetTimer(BurstTimer, this, &AEnemy::AttackEnd, Rifle->GetReloadTime(), false);
+		return;
+	}
+
+	Rifle->FireAt(CombatTarget->GetActorLocation() + AimOffset);
+
+	if (++BurstShotsFired >= BurstCount)
+	{
+		FinishBurst();
+	}
+}
+
+void AEnemy::FinishBurst()
+{
+	// 用计时器延后 AttackEnd，避免同一帧内同步重入 Attack -> StartBurst
+	StopBurst();
+	GetWorldTimerManager().SetTimer(BurstTimer, this, &AEnemy::AttackEnd, BurstFireInterval, false);
+}
+
+void AEnemy::StopBurst()
+{
+	bIsBurstFiring = false;
+	GetWorldTimerManager().ClearTimer(BurstTimer);
+	if (!IsDead())
+	{
+		GetCharacterMovement()->bOrientRotationToMovement = true;
+	}
+}
+
+void AEnemy::FaceCombatTarget(float DeltaTime)
+{
+	if (CombatTarget == nullptr) return;
+
+	FVector ToTarget = CombatTarget->GetActorLocation() - GetActorLocation();
+	ToTarget.Z = 0.f;
+	if (ToTarget.IsNearlyZero()) return;
+
+	const FRotator Current = GetActorRotation();
+	const FRotator Desired(0.f, ToTarget.Rotation().Yaw, 0.f);
+	SetActorRotation(FMath::RInterpTo(Current, Desired, DeltaTime, 10.f));
+}
+
 void AEnemy::GetHit_Implementation(const FVector& ImpactPoint)
 {
 	//DRAW_SPHERE_COLOR(ImpactPoint, FColor::Cyan);
 	ClearAttackTimer();
+	StopBurst();
 	SetWeaponCollisionEnabled(ECollisionEnabled::NoCollision);
 	StopAttackMontage();
 

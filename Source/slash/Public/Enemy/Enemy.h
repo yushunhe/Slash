@@ -13,6 +13,7 @@ class UParticleSystem;
 class UWidgetComponent;
 class UHealthBarComponent;
 class UPawnSensingComponent;
+class ARangedWeapon;
 
 UCLASS()
 class SLASH_API AEnemy : public ABaseCharacter
@@ -58,6 +59,7 @@ private:
 	bool IsOutsideAttackRadius();
 	bool IsInsideAttackRadius();
 	bool IsChasing();
+	bool IsMovingToTarget() const;
 	bool IsAttacking();
 	bool IsDead();
 	bool IsEngaged();
@@ -70,6 +72,15 @@ private:
 	void MoveToTarget(AActor* Target);
 	AActor* ChoosePatrolTarget();
 	void SpawnDefaultWeapon();
+
+	/** 远程射击分支：装备 ARangedWeapon 时，攻击改为连发射击 */
+	ARangedWeapon* GetRangedWeapon() const;
+	double GetEngageRadius() const;
+	void StartBurst();
+	void FireBurstShot();
+	void FinishBurst();
+	void StopBurst();
+	void FaceCombatTarget(float DeltaTime);
 
 	UFUNCTION()
 	void PawnSeen(APawn* SeenPawn);
@@ -100,6 +111,22 @@ private:
 	UPROPERTY(EditAnywhere, Category = Combat)
 	float AttackMax = 0.f;
 
+	// 远程武器专用：进入该距离即开始射击（近战仍用 AttackRadius）
+	UPROPERTY(EditAnywhere, Category = Combat)
+	double ShootRadius = 1200.f;
+
+	// 每次攻击连发的发数
+	UPROPERTY(EditAnywhere, Category = Combat)
+	int32 BurstCount = 3;
+
+	// 连发间隔（秒）；也作为连发结束后的停顿
+	UPROPERTY(EditAnywhere, Category = Combat)
+	float BurstFireInterval = 0.4f;
+
+	// 瞄准点 = 目标位置 + AimOffset（默认约胸口高度）
+	UPROPERTY(EditAnywhere, Category = Combat)
+	FVector AimOffset = FVector(0.f, 0.f, 80.f);
+
 	UPROPERTY(EditAnywhere, Category = Combat)
 	float PatrollingSpeed = 125.f;
 
@@ -110,6 +137,16 @@ private:
 	float DeathLifeSpan = 8.f;
 
 	FTimerHandle AttackTimer;
+
+	// 追击失败（多半是导航还没生成）后的重试间隔，避免每次 Tick 都重发寻路请求
+	UPROPERTY(EditAnywhere, Category = Combat)
+	float ChaseRetryInterval = 0.5f;
+
+	float LastChaseAttemptTime = -1000.f;
+
+	FTimerHandle BurstTimer;
+	int32 BurstShotsFired = 0;
+	bool bIsBurstFiring = false;
 
 	/**
 	* Navigation

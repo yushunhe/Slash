@@ -100,12 +100,31 @@ void ASlashCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	UpdateAimCamera(DeltaTime);
+	UpdateAimFacing();
+	UpdateFireCameraAlignment(DeltaTime);
 
-	// 持枪时：站立/瞄准播放 RifleIdleAnimation，移动/跳跃/死亡时让位给现有动画
+	// 弹匣打空（或开始换弹）时即使还按着左键，也要退回普通瞄准动作
+	if (bRifleFirePlaying && (!EquippedRifle || !EquippedRifle->CanFire()))
+	{
+		StopRifleFire();
+	}
+
+	const bool bReloading = EquippedRifle && EquippedRifle->IsReloading();
+
+	// 持枪时：换弹 → 开火 → 待机，优先级依次降低
 	if (CombatMode == ECombatMode::ECM_Ranged && EquippedRifle && IsAlive())
 	{
-		const bool bMoving = GetVelocity().SizeSquared2D() > 100.f || GetCharacterMovement()->IsFalling();
-		if (bMoving)
+		if (bReloading)
+		{
+			// 换弹动画占着插槽，别让待机把它顶掉
+			StopRifleIdle();
+		}
+		else if (bRifleFirePlaying)
+		{
+			// 开火期间保持开火动作，不要被待机动画顶掉
+			StopRifleIdle();
+		}
+		else if (GetVelocity().SizeSquared2D() > 100.f || GetCharacterMovement()->IsFalling())
 		{
 			StopRifleIdle();
 		}
@@ -185,6 +204,7 @@ void ASlashCharacter::GetHit_Implementation(const FVector& ImpactPoint)
 void ASlashCharacter::Die(const FName& /*SectionName*/)
 {
 	StopAim();
+	StopRifleFire();
 	StopRifleIdle();
 
 	if (EquippedRifle)
@@ -248,7 +268,7 @@ void ASlashCharacter::StartRagdoll()
 
 void ASlashCharacter::MoveForward(float Value)
 {
-	if (!IsUnoccupied()) return;
+	if (!IsUnoccupied() || IsReloadingRifle()) return;
 	if (Controller && Value != 0.f)
 	{
 		const FRotator ControlRotation = GetControlRotation();
@@ -261,7 +281,7 @@ void ASlashCharacter::MoveForward(float Value)
 
 void ASlashCharacter::MoveRight(float Value)
 {
-	if (!IsUnoccupied()) return;
+	if (!IsUnoccupied() || IsReloadingRifle()) return;
 	if (Controller && Value != 0.f)
 	{
 		const FRotator ControlRotation = GetControlRotation();
@@ -316,7 +336,13 @@ void ASlashCharacter::PrimaryActionPressed()
 {
 	if (CombatMode == ECombatMode::ECM_Ranged && EquippedRifle)
 	{
+		// 没子弹时只出空枪声，不要播开火动作
+		const bool bCanFire = EquippedRifle->CanFire();
 		EquippedRifle->StartFire();
+		if (bCanFire)
+		{
+			PlayRifleFire();
+		}
 		return;
 	}
 
@@ -328,6 +354,7 @@ void ASlashCharacter::PrimaryActionReleased()
 	if (EquippedRifle)
 	{
 		EquippedRifle->StopFire();
+		StopRifleFire();
 	}
 }
 
@@ -345,8 +372,9 @@ void ASlashCharacter::StartAim()
 	PreAimWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
 	GetCharacterMovement()->MaxWalkSpeed = AimWalkSpeed;
 
-	// 瞄准时角色朝向跟随相机，保证射击方向与准星一致
-	bUseControllerRotationYaw = true;
+	// 朝向由 UpdateAimFacing 每帧手动设置（相机朝向 + AimYawOffset），
+	// 所以这里不要再让控制器直接驱动 yaw，否则会覆盖偏移
+	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = false;
 
 	// 相机由 UpdateAimCamera 在 Tick 里平滑过渡到过肩视角
@@ -370,6 +398,56 @@ void ASlashCharacter::StopAim()
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 
 	// 相机由 UpdateAimCamera 在 Tick 里平滑回到髋射视角
+}
+
+bool ASlashCharacter::IsReloadingRifle() const
+{
+	return EquippedRifle && EquippedRifle->IsReloading();
+}
+
+void ASlashCharacter::UpdateFireCameraAlignment(float DeltaTime)
+{
+	if (!bAlignCameraToMuzzleOnFire || bIsAiming || !bRifleFirePlaying || !EquippedRifle)
+	{
+		return;
+	}
+
+	// 站着开火才对齐：一边移动一边转视角会让"输入方向（跟随相机）"和"相机（跟随枪口）"互相推动
+	if (GetVelocity().SizeSquared2D() > FMath::Square(FireCameraAlignMaxSpeed))
+	{
+		return;
+	}
+
+	AController* OwnerController = GetController();
+	if (!OwnerController)
+	{
+		return;
+	}
+
+	const FRotator Target = EquippedRifle->GetBarrelRotation();
+	const FRotator Smoothed = FMath::RInterpTo(
+		OwnerController->GetControlRotation(), Target, DeltaTime, FireCameraAlignSpeed);
+	OwnerController->SetControlRotation(Smoothed);
+}
+
+void ASlashCharacter::UpdateAimFacing()
+{
+	if (!bIsAiming)
+	{
+		return;
+	}
+
+	AController* OwnerController = GetController();
+	if (!OwnerController)
+	{
+		return;
+	}
+
+	// 角色始终面向"相机 yaw + 偏移"，这样动画里的持枪姿势能对准准星；
+	// 射击方向仍由相机决定，不受这里影响
+	const float DesiredYaw = OwnerController->GetControlRotation().Yaw + AimYawOffset;
+	const FRotator Current = GetActorRotation();
+	SetActorRotation(FRotator(Current.Pitch, DesiredYaw, Current.Roll));
 }
 
 void ASlashCharacter::CaptureHipCameraValues()
@@ -422,6 +500,8 @@ void ASlashCharacter::ReloadWeapon()
 	if (EquippedRifle)
 	{
 		EquippedRifle->Reload();
+		// 换弹会中断射击，开火动画也要跟着停
+		StopRifleFire();
 	}
 }
 
@@ -465,6 +545,7 @@ void ASlashCharacter::SwitchWeapon()
 	}
 
 	EquippedRifle->StopFire();
+	StopRifleFire();
 	StopAim();
 	StopRifleIdle();
 	EquippedRifle->AttachMeshToSocket(GetMesh(), FName("SpineSocket"));
@@ -527,6 +608,74 @@ void ASlashCharacter::StopRifleIdle()
 	bRifleIdlePlaying = false;
 }
 
+void ASlashCharacter::PlayRifleFire()
+{
+	// 挂点和动画相互独立：即使没配开火动画，也要切到开火用的 socket
+	if (EquippedRifle)
+	{
+		EquippedRifle->AttachMeshToSocket(GetMesh(), RifleFireSocketName);
+	}
+
+	if (bRifleFirePlaying)
+	{
+		return;
+	}
+
+	// 没有配置开火动画时保持原样，不影响射击本身
+	if (!RifleFireAnimation)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	UAnimInstance* AnimInstance = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+	if (!AnimInstance)
+	{
+		return;
+	}
+
+	// 开火动作和待机动作抢同一个 DefaultSlot，先停待机
+	StopRifleIdle();
+
+	constexpr int32 LoopCount = 100000;
+	RifleFireMontageInstance = AnimInstance->PlaySlotAnimationAsDynamicMontage(
+		RifleFireAnimation,
+		FName("DefaultSlot"),
+		0.05f,
+		0.1f,
+		1.f,
+		LoopCount,
+		0.f,
+		0.f);
+
+	bRifleFirePlaying = RifleFireMontageInstance != nullptr;
+}
+
+void ASlashCharacter::StopRifleFire()
+{
+	// 回到平时的持枪 socket
+	if (EquippedRifle)
+	{
+		EquippedRifle->AttachMeshToSocket(GetMesh(), FName("Weapon"));
+	}
+
+	if (!bRifleFirePlaying)
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		if (UAnimInstance* AnimInstance = MeshComp->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.15f, RifleFireMontageInstance);
+		}
+	}
+
+	RifleFireMontageInstance = nullptr;
+	bRifleFirePlaying = false;
+}
+
 void ASlashCharacter::AddAmmo(int32 Amount)
 {
 	if (EquippedRifle)
@@ -552,6 +701,7 @@ void ASlashCharacter::EquipWeapon(AWeapon* Weapon)
 		if (EquippedRifle && EquippedRifle != Rifle)
 		{
 			EquippedRifle->StopFire();
+			StopRifleFire();
 			EquippedRifle->Destroy();
 		}
 
@@ -583,6 +733,7 @@ void ASlashCharacter::EquipWeapon(AWeapon* Weapon)
 	if (EquippedRifle)
 	{
 		EquippedRifle->StopFire();
+		StopRifleFire();
 		EquippedRifle->AttachMeshToSocket(GetMesh(), FName("SpineSocket"));
 	}
 
